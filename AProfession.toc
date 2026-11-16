@@ -1,0 +1,15 @@
+## Interface: 16001
+## Title: AProfession
+## Notes: Profession window with search, filters, material lists, queue and costs
+## Version: 0.1.0
+## Category: Professions
+## IconTexture: Interface\Icons\Trade_BlackSmithing
+## Dependencies: ACore
+## OptionalDeps: ALoot, AAuction, ABag
+## SavedVariables: AProfessionDB
+## SavedVariablesPerCharacter: AProfessionCharDB
+
+Core.lua
+Trade.lua
+Store.lua
+Window.lua
