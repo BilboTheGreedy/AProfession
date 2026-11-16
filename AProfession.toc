@@ -1,6 +1,6 @@
 ## Interface: 16001
 ## Title: AProfession
-## Notes: Profession window with search, filters, material lists, queue and costs
+## Notes: Profession overview, tabs, search, material lists, queue and costs
 ## Version: 0.1.0
 ## Category: Professions
 ## IconTexture: Interface\Icons\Trade_BlackSmithing
@@ -10,6 +10,9 @@
 ## SavedVariablesPerCharacter: AProfessionCharDB
 
 Core.lua
+Professions.lua
 Trade.lua
 Store.lua
+Overview.lua
+Tabs.lua
 Window.lua

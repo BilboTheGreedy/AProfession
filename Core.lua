@@ -1,7 +1,7 @@
 local ADDON, ns = ...
 
 local defaults = {
-	blizzard = false,
+	replace = false,
 	hideGrey = false,
 	haveMats = false,
 	skillUp = false,
@@ -16,7 +16,7 @@ local charDefaults = {
 	collapsed = {},
 }
 
-ACore.New(ADDON, ns, { db = "AProfessionDB", defaults = defaults, char = "AProfessionCharDB", charDefaults = charDefaults })
+ACore.New(ADDON, ns, { db = "AProfessionDB", defaults = defaults, profile = true, shared = { "chars" }, char = "AProfessionCharDB", charDefaults = charDefaults })
 
 ACore.Register({
 	name = "AProfession",
@@ -24,6 +24,7 @@ ACore.Register({
 	slash = "/aprof",
 	desc = "profession window",
 	toggle = function() ns.Window.Toggle() end,
+	options = function() return ns.OptionEntries() end,
 })
 
 local GetInfo = (C_Item and C_Item.GetItemInfo) or GetItemInfo
@@ -105,10 +106,13 @@ SlashCmdList["APROFESSION"] = function(msg)
 		ns.Store.Who(rest)
 	elseif cmd == "cooldowns" or cmd == "cd" then
 		ns.Store.Remind(true)
-	elseif cmd == "blizzard" then
-		ns.db.blizzard = not ns.db.blizzard
-		ns.Print(ns.db.blizzard and "using the default profession window" or "using AProfession")
+	elseif cmd == "replace" or cmd == "blizzard" then
+		ns.db.replace = not ns.db.replace
+		ns.Print(ns.db.replace and "AProfession replaces the default profession window" or "the default profession window stays, AProfession opens on request")
 		ns:Fire("MODE_CHANGED")
+	elseif cmd == "overview" then
+		ns.Window.Show()
+		ns.Window.Select("overview")
 	elseif cmd == "reset" then
 		ns.db.window.pos = nil
 		ns.db.window.scale = 1
@@ -117,4 +121,10 @@ SlashCmdList["APROFESSION"] = function(msg)
 		ns.Window.Show()
 		ns.Window.SetSearch(msg)
 	end
+end
+
+BINDING_HEADER_APROFESSION = "AProfession"
+BINDING_NAME_APROFESSION_TOGGLE = "Toggle AProfession"
+function AProfession_ToggleBinding()
+	ns.Window.Toggle()
 end

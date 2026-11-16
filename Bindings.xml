@@ -1,0 +1,5 @@
+<Bindings>
+	<Binding name="APROFESSION_TOGGLE" header="APROFESSION" category="ADDONS">
+		AProfession_ToggleBinding()
+	</Binding>
+</Bindings>

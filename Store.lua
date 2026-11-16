@@ -23,13 +23,70 @@ function Store.Save(name, rank, max, recipes)
 	p.recipes = {}
 	p.cooldowns = p.cooldowns or {}
 	for _, r in ipairs(recipes) do
-		p.recipes[#p.recipes + 1] = { r.name, r.item or 0 }
+		local flat = {}
+		local whole = true
+		for _, re in ipairs(r.reagents or {}) do
+			if re.item then
+				flat[#flat + 1] = re.item
+				flat[#flat + 1] = re.need or 1
+			else
+				whole = false
+			end
+		end
+		p.recipes[#p.recipes + 1] = { r.name, r.item or 0, r.difficulty or 3, whole and flat or false, r.made or 1, r.key }
 		if r.cooldown and r.cooldown > 0 then
 			p.cooldowns[r.name] = now() + math.floor(r.cooldown)
 		elseif p.cooldowns[r.name] and p.cooldowns[r.name] <= now() then
 			p.cooldowns[r.name] = nil
 		end
 	end
+end
+
+function Store.Get(profession, charKey)
+	local c = ns.db and ns.db.chars[charKey or ns.charKey or ""]
+	local p = c and c[profession]
+	if type(p) ~= "table" then return nil end
+	return p
+end
+
+function Store.List(profession, charKey)
+	local p = Store.Get(profession, charKey)
+	local out = {}
+	if not p then return out end
+	for _, e in ipairs(p.recipes or {}) do
+		if type(e) == "table" and type(e[1]) == "string" then
+			local r = {
+				stored = true, name = e[1], item = e[2] ~= 0 and e[2] or nil, difficulty = e[3] or 3,
+				made = e[5] or 1, key = e[6] or e[1], reagents = {}, profession = profession, can = 0,
+			}
+			local flat = e[4]
+			if type(flat) == "table" then
+				local n
+				for i = 1, #flat, 2 do
+					local need = math.max(1, flat[i + 1] or 1)
+					r.reagents[#r.reagents + 1] = { item = flat[i], need = need }
+					local c = math.floor(ns.Count(flat[i], false) / need)
+					if not n or c < n then n = c end
+				end
+				r.can = n or 0
+			end
+			out[#out + 1] = r
+		end
+	end
+	return out
+end
+
+function Store.ProfessionCooldowns(profession)
+	local out = {}
+	local p = Store.Get(profession)
+	for name, expires in pairs(p and p.cooldowns or {}) do
+		out[#out + 1] = { name = name, left = expires - now() }
+	end
+	table.sort(out, function(a, b)
+		if a.left ~= b.left then return a.left < b.left end
+		return a.name < b.name
+	end)
+	return out
 end
 
 function Store.Find(text)

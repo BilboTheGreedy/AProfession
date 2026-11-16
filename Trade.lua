@@ -219,10 +219,24 @@ function Trade.Frame()
 end
 
 local hidden = {}
+
+local function combat()
+	return InCombatLockdown and InCombatLockdown()
+end
+
 local function conceal(frame)
 	if not frame or hidden[frame] then return end
-	if InCombatLockdown and InCombatLockdown() then return end
-	hidden[frame] = true
+	if combat() then return end
+	local saved = { points = {} }
+	pcall(function()
+		saved.alpha = frame:GetAlpha()
+		saved.mouse = frame:IsMouseEnabled()
+		saved.clamped = frame:IsClampedToScreen()
+		for i = 1, frame:GetNumPoints() or 0 do
+			saved.points[i] = { frame:GetPoint(i) }
+		end
+	end)
+	hidden[frame] = saved
 	pcall(frame.SetAlpha, frame, 0)
 	pcall(frame.EnableMouse, frame, false)
 	pcall(function()
@@ -233,33 +247,57 @@ local function conceal(frame)
 end
 
 local function reveal(frame)
-	if not frame or not hidden[frame] then return end
+	local saved = frame and hidden[frame]
+	if not saved then return end
+	if combat() then
+		Trade.pendingReveal = true
+		return
+	end
 	hidden[frame] = nil
-	pcall(frame.SetAlpha, frame, 1)
-	pcall(frame.EnableMouse, frame, true)
+	pcall(frame.SetAlpha, frame, type(saved.alpha) == "number" and saved.alpha or 1)
+	pcall(frame.EnableMouse, frame, saved.mouse ~= false)
 	pcall(function()
 		frame:ClearAllPoints()
-		frame:SetPoint("TOPLEFT", UIParent, "TOPLEFT", 16, -116)
+		for _, pt in ipairs(saved.points) do
+			if pt[1] then frame:SetPoint(pt[1], pt[2], pt[3], pt[4], pt[5]) end
+		end
+		if saved.clamped ~= nil then frame:SetClampedToScreen(saved.clamped and true or false) end
 	end)
 	if UpdateUIPanelPositions then pcall(UpdateUIPanelPositions, frame) end
 end
 
+function Trade.Concealed(frame)
+	return hidden[frame] ~= nil
+end
+
+local function revealAll()
+	local list = {}
+	for f in pairs(hidden) do list[#list + 1] = f end
+	for _, f in ipairs(list) do reveal(f) end
+end
+
 function Trade.ApplyMode()
 	local frame = Trade.Frame()
-	if not Trade.mode then
-		for f in pairs(hidden) do reveal(f) end
+	if not Trade.mode or not ns.db.replace then
+		revealAll()
 		return
 	end
-	if ns.db.blizzard then
-		reveal(frame)
-	else
-		conceal(frame)
-		ns.After(0, function()
-			if Trade.mode and not ns.db.blizzard then
-				hidden[frame or false] = nil
-				conceal(Trade.Frame())
-			end
-		end)
+	conceal(frame)
+	ns.After(0, function()
+		if Trade.mode and ns.db.replace then conceal(Trade.Frame()) end
+	end)
+end
+
+function Trade.Release()
+	local frame = Trade.Frame()
+	Trade.Close()
+	revealAll()
+	if frame and not combat() and frame.IsShown and frame:IsShown() then
+		if HideUIPanel then
+			pcall(HideUIPanel, frame)
+		else
+			pcall(frame.Hide, frame)
+		end
 	end
 end
 
@@ -272,7 +310,7 @@ end
 local function close(mode)
 	if Trade.mode ~= mode and not (mode == "trade" and Trade.mode == "modern") then return end
 	Trade.mode = nil
-	for f in pairs(hidden) do reveal(f) end
+	revealAll()
 	ns:Fire("TRADE_CLOSE")
 end
 
@@ -293,3 +331,9 @@ ns:On("TRADE_SKILL_DATA_SOURCE_CHANGED", update)
 ns:On("CRAFT_UPDATE", update)
 ns:On("BAG_UPDATE_DELAYED", update)
 ns:Listen("MODE_CHANGED", function() Trade.ApplyMode() end)
+ns:On("PLAYER_REGEN_ENABLED", function()
+	if Trade.pendingReveal then
+		Trade.pendingReveal = nil
+		Trade.ApplyMode()
+	end
+end)

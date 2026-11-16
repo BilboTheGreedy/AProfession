@@ -27,10 +27,20 @@ local SLOT_NAMES = {
 local frame
 local closing = false
 local state = {
+	view = "overview", prof = nil, pick = nil, keep = nil,
 	tab = "recipes", query = "", selected = nil, amount = 1, queue = {},
 	category = nil, slot = nil,
 	recipes = {}, unknown = {}, byItem = {}, byKey = {}, missing = nil,
 }
+
+local function clock()
+	return GetTime and GetTime() or 0
+end
+
+local function isLive()
+	if state.view ~= "prof" or not Trade.Active() then return false end
+	return state.prof == nil or state.prof == (Trade.Info())
+end
 
 local function reagentName(r)
 	return r.name or ns.ItemName(r.item) or (r.item and ("Item " .. r.item)) or "?"
@@ -147,6 +157,64 @@ local function recipeRows()
 	return rows, #list
 end
 
+local function storedRows()
+	local words = {}
+	for w in state.query:lower():gmatch("%S+") do words[#words + 1] = w end
+	local rows = {}
+	for _, r in ipairs(Store.List(state.prof or "")) do
+		local hit = true
+		local l = r.name:lower()
+		for i = 1, #words do
+			if not l:find(words[i], 1, true) then hit = false break end
+		end
+		if hit then rows[#rows + 1] = { kind = "stored", recipe = r } end
+	end
+	local count = #rows
+	if count == 0 then
+		local entry = ns.Profs.Find(state.prof)
+		local text = "Nothing recorded for this profession yet. Open it once."
+		if entry and not entry.window then
+			text = "Gathering skill, it has no recipe window."
+		elseif Store.Get(state.prof or "") then
+			text = "Nothing matches the search."
+		end
+		rows[1] = { kind = "note", text = text }
+	end
+	return rows, count
+end
+
+local function storedDetail()
+	local rows = {}
+	local entry = ns.Profs.Find(state.prof)
+	rows[#rows + 1] = { kind = "note", text = "Recorded list, not live.", dim = true }
+	if entry and entry.window then
+		local how = ns.db.replace and "Click its tab to open it." or "Open the profession to craft or refresh it."
+		rows[#rows + 1] = { kind = "note", text = how, dim = true }
+	end
+	local picked
+	for _, r in ipairs(Store.List(state.prof or "")) do
+		if r.name == state.pick then picked = r end
+	end
+	if picked then
+		rows[#rows + 1] = { kind = "header", text = picked.name }
+		rows[#rows + 1] = { kind = "note", text = "You can make " .. picked.can, good = picked.can > 0, dim = picked.can == 0 }
+		if #picked.reagents > 0 then
+			rows[#rows + 1] = { kind = "header", text = "Reagents" }
+			for _, re in ipairs(picked.reagents) do
+				rows[#rows + 1] = { kind = "reagent", reagent = re, need = re.need }
+			end
+		end
+	end
+	local cds = Store.ProfessionCooldowns(state.prof or "")
+	if #cds > 0 then
+		rows[#rows + 1] = { kind = "header", text = "Cooldowns" }
+		for _, cd in ipairs(cds) do
+			rows[#rows + 1] = { kind = "note", text = cd.name, right = cd.left <= 0 and "ready" or ns.Duration(cd.left), good = cd.left <= 0 }
+		end
+	end
+	return rows
+end
+
 local function missingRows()
 	if not state.missing then
 		local name, _, _, id = Trade.Info()
@@ -191,7 +259,8 @@ end
 
 local function detailRows()
 	local rows = {}
-	if not Trade.Active() then
+	if state.view == "prof" and state.prof and not isLive() then return storedDetail() end
+	if not isLive() then
 		rows[#rows + 1] = { kind = "note", text = "Open a profession from your spellbook to see its recipes." }
 		local cds = Store.Cooldowns()
 		if #cds > 0 then
@@ -308,12 +377,15 @@ local function createRecipeRow(list)
 		elseif d.kind == "missing" then
 			local m = d.missing
 			if ALoot and ALoot.Open and m.item then pcall(ALoot.Open, m.item) end
+		elseif d.kind == "stored" then
+			state.pick = d.recipe.name
+			Window.Refresh(true)
 		end
 	end)
 	row:SetScript("OnEnter", function(self)
 		local d = self.data
 		if not d then return end
-		if d.kind == "recipe" then
+		if d.kind == "recipe" or d.kind == "stored" then
 			tip(self, d.recipe.link, d.recipe.item)
 		elseif d.kind == "missing" and d.missing.item then
 			tip(self, nil, d.missing.item)
@@ -357,6 +429,16 @@ local function updateRecipeRow(row, d)
 		row.right:SetText(right)
 		row.star:Show()
 		row.star.tex:SetAlpha(ns.chardb.favourites[r.key] and 1 or 0.15)
+	elseif d.kind == "stored" then
+		local r = d.recipe
+		row.sel:SetShown(state.pick == r.name)
+		row.icon:SetTexture(r.item and ns.ItemIcon(r.item) or QUESTION)
+		row.icon:Show()
+		row.text:SetPoint("LEFT", 30, 0)
+		local c = DIFF[r.difficulty] or DIFF[3]
+		row.text:SetText(r.name)
+		row.text:SetTextColor(c[1], c[2], c[3])
+		row.right:SetText(r.can > 0 and ("[" .. r.can .. "]") or "")
 	elseif d.kind == "missing" then
 		local m = d.missing
 		row.icon:SetTexture(m.icon or QUESTION)
@@ -526,21 +608,26 @@ local function filterMenu(anchor)
 	UI.Menu(anchor, entries)
 end
 
-local function optionsMenu(anchor)
+function ns.OptionEntries()
 	local db = ns.db
-	local entries = {
-		{ text = "Options", title = true },
-		UI.Check(db, "blizzard", "Use the default profession window", function()
+	local function changed() Window.Refresh() end
+	return {
+		{ text = "Profession window", title = true },
+		UI.Check(db, "replace", "Replace the default profession window", function()
 			ns:Fire("MODE_CHANGED")
-			if db.blizzard then
-				closing = true
-				frame:Hide()
-				closing = false
-			end
+			Window.Refresh()
 		end),
 		UI.Check(db, "reminder", "Tell me about ready cooldowns at login"),
+		{ text = "Recipe list", title = true },
+		UI.Check(db, "haveMats", "Only what I have materials for", changed),
+		UI.Check(db, "skillUp", "Only what gives skill", changed),
+		UI.Check(db, "hideGrey", "Hide grey recipes", changed),
 	}
-	for _, e in ipairs(UI.ScaleEntries(db.window, function(s) frame:SetScale(s) end)) do
+end
+
+local function optionsMenu(anchor)
+	local entries = ns.OptionEntries()
+	for _, e in ipairs(UI.ScaleEntries(ns.db.window, function(s) frame:SetScale(s) end)) do
 		entries[#entries + 1] = e
 	end
 	UI.Menu(anchor, entries)
@@ -659,54 +746,125 @@ local function build()
 	dl:SetPoint("TOPLEFT", left, "TOPRIGHT", 0, -2)
 	dl:SetPoint("BOTTOMRIGHT", 0, 36)
 	frame.detailList = dl
+	frame.left = left
+	frame.foot = foot
+
+	local ol = UI.List(body, 26, ns.Overview.CreateRow, ns.Overview.UpdateRow)
+	ol:SetPoint("TOPLEFT", 0, -2)
+	ol:SetPoint("BOTTOMRIGHT", 0, 2)
+	frame.overviewList = ol
+
+	ns.Tabs.Build(frame)
 
 	frame:SetScript("OnHide", function()
 		UI.CloseMenu()
-		if not closing and Trade.Active() and not ns.db.blizzard then Trade.Close() end
+		local release = not closing and Trade.Active() and ns.db.replace
+		state.view, state.prof, state.pick, state.keep = "overview", nil, nil, nil
+		if release then Trade.Release() end
+		ns.Tabs.Sync()
 	end)
 end
 
 function Window.Refresh(keep)
 	if not frame or not frame:IsShown() then return end
-	local name, rank, max = Trade.Info()
-	if name then
+	local live = isLive()
+	local overview = state.view == "overview"
+	local name, rank, max
+	if live then
+		name, rank, max = Trade.Info()
+	elseif not overview and state.prof then
+		local entry = ns.Profs.Find(state.prof)
+		local p = Store.Get(state.prof)
+		name = state.prof
+		rank = entry and entry.rank or (p and p.rank) or 0
+		max = entry and entry.max or (p and p.max) or 0
+	end
+	if name and not overview then
 		frame.title:SetText(name)
 		frame.skill:SetMinMaxValues(0, math.max(1, max or 1))
 		frame.skill:SetValue(rank or 0)
-		frame.skill.left:SetText(name)
+		frame.skill.left:SetText(name .. (live and "" or "   (recorded)"))
 		local right = (rank or 0) .. " / " .. (max or 0)
 		if max and rank and max > rank then right = right .. "   " .. (max - rank) .. " to go" end
 		frame.skill.right:SetText(right)
 		frame.skill:Show()
 	else
-		frame.title:SetText("AProfession")
+		frame.title:SetText(overview and "Professions" or "AProfession")
 		frame.skill:Hide()
 	end
 	local rows, count
-	if not Trade.Active() then
-		rows, count = { { kind = "note", text = "No profession open." } }, 0
-	elseif state.tab == "missing" then
-		rows, count = missingRows()
+	if live then
+		if state.tab == "missing" then
+			rows, count = missingRows()
+		else
+			rows, count = recipeRows()
+			if #rows == 0 then rows = { { kind = "note", text = "Nothing matches the filters." } } end
+		end
+	elseif not overview and state.prof then
+		rows, count = storedRows()
 	else
-		rows, count = recipeRows()
-		if #rows == 0 then rows = { { kind = "note", text = "Nothing matches the filters." } } end
+		rows, count = { { kind = "note", text = "No profession open." } }, 0
 	end
 	frame.recipeList:SetData(rows, keep)
 	frame.detailList:SetData(detailRows(), keep)
+	frame.left:SetShown(not overview)
+	frame.detailList:SetShown(not overview)
+	frame.foot:SetShown(not overview)
+	frame.overviewList:SetShown(overview)
+	if overview then
+		local orows = ns.Overview.Rows(state.query)
+		frame.overviewList:SetData(orows, keep)
+		count = 0
+		for _, r in ipairs(orows) do
+			if r.kind == "craft" then count = count + 1 end
+		end
+	end
 	local db = ns.db
+	frame.missingButton:SetShown(live)
+	frame.filterButton:SetShown(live)
 	frame.missingButton:SetActive(state.tab == "missing")
 	frame.filterButton:SetActive(db.haveMats or db.skillUp or db.hideGrey or db.sort ~= "default" or state.category ~= nil or state.slot ~= nil)
-	local active = Trade.Active()
-	for _, key in ipairs({ "createButton", "allButton", "queueButton" }) do frame[key]:SetShown(active) end
-	frame.amount:SetShown(active)
-	frame.nextButton:SetShown(active and #state.queue > 0)
+	for _, key in ipairs({ "createButton", "allButton", "queueButton" }) do frame[key]:SetShown(live) end
+	frame.amount:SetShown(live)
+	frame.nextButton:SetShown(live and #state.queue > 0)
 	frame.clearButton:SetShown(#state.queue > 0)
 	frame.nextButton:SetLabel("Next (" .. #state.queue .. ")")
 	frame.count = count
+	ns.Tabs.Refresh()
+end
+
+function Window.Select(key, pick)
+	if not frame then build() end
+	if key == "overview" or not key then
+		state.view, state.prof, state.pick = "overview", nil, nil
+	else
+		state.view, state.prof = "prof", key
+		state.pick = pick
+		state.tab = "recipes"
+		state.category, state.slot = nil, nil
+		if isLive() then
+			if pick then
+				for _, r in ipairs(state.recipes) do
+					if r.name == pick then state.selected = r.key end
+				end
+			end
+		else
+			state.keep = clock()
+		end
+	end
+	if not frame:IsShown() then frame:Show() end
+	Window.Refresh()
 end
 
 function Window.Show()
 	if not frame then build() end
+	if not frame:IsShown() then
+		if Trade.Active() then
+			state.view, state.prof = "prof", (Trade.Info())
+		else
+			state.view, state.prof = "overview", nil
+		end
+	end
 	frame:Show()
 	Window.Refresh()
 end
@@ -737,8 +895,23 @@ ns:Listen("TRADE_OPEN", function()
 	state.selected = nil
 	state.tab = "recipes"
 	reload()
-	if ns.db.blizzard then return end
-	Window.Show()
+	Window.AttachButton()
+	local name = (Trade.Info())
+	local shown = frame and frame:IsShown()
+	if ns.db.replace or (shown and state.view == "prof") then
+		state.view, state.prof = "prof", name
+		if state.pick then
+			for _, r in ipairs(state.recipes) do
+				if r.name == state.pick then state.selected = r.key end
+			end
+		end
+	end
+	state.keep = nil
+	if ns.db.replace then
+		if not frame then build() end
+		frame:Show()
+	end
+	Window.Refresh()
 end)
 
 ns:Listen("TRADE_UPDATE", function()
@@ -749,11 +922,41 @@ end)
 ns:Listen("TRADE_CLOSE", function()
 	state.recipes, state.unknown, state.byItem, state.byKey = {}, {}, {}, {}
 	state.missing = nil
-	if frame and frame:IsShown() then
+	if not frame or not frame:IsShown() then return end
+	local switching = state.keep and clock() - state.keep < 2
+	if ns.db.replace and not switching then
 		closing = true
 		frame:Hide()
 		closing = false
+	else
+		Window.Refresh()
 	end
+end)
+
+local attached = {}
+function Window.AttachButton()
+	for _, name in ipairs({ "ProfessionsFrame", "ProfessionsBookFrame", "TradeSkillFrame", "CraftFrame" }) do
+		local host = _G[name]
+		if type(host) == "table" and not attached[host] then
+			attached[host] = true
+			local b = UI.Button(host, "AProfession", function() Window.Toggle() end)
+			b:SetPoint("BOTTOMRIGHT", host, "TOPRIGHT", -4, 2)
+			b:SetScript("OnEnter", function(self)
+				GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+				GameTooltip:AddLine("AProfession", 1, 0.82, 0)
+				GameTooltip:AddLine("Overview, material lists, costs and missing recipes", 0.9, 0.9, 0.92)
+				GameTooltip:Show()
+			end)
+			b:SetScript("OnLeave", function() GameTooltip:Hide() end)
+			Window.buttons = Window.buttons or {}
+			Window.buttons[#Window.buttons + 1] = b
+		end
+	end
+end
+
+ns:Listen("LOGIN", function() Window.AttachButton() end)
+ns:On("ADDON_LOADED", function(name)
+	if type(name) == "string" and name:find("^Blizzard_") then Window.AttachButton() end
 end)
 
 ns:Listen("LAYOUT_RESET", function()
