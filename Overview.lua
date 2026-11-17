@@ -77,7 +77,7 @@ function Overview.Alts()
 			if type(p) == "table" then profs[#profs + 1] = { name = name, rank = p.rank or 0, max = p.max or 0, recipes = #(p.recipes or {}) } end
 		end
 		table.sort(profs, function(a, b) return a.name < b.name end)
-		if #profs > 0 then out[#out + 1] = { char = key, profs = profs } end
+		if #profs > 0 then out[#out + 1] = { char = key, profs = profs, cooldowns = ns.Store.Cooldowns(key) } end
 	end
 	return out
 end
@@ -161,6 +161,12 @@ function Overview.Rows(query)
 			rows[#rows + 1] = {
 				kind = "note", indent = true, text = p.name,
 				right = p.rank .. " / " .. p.max .. "     " .. p.recipes .. (p.recipes == 1 and " recipe" or " recipes"),
+			}
+		end
+		for _, cd in ipairs(a.cooldowns) do
+			rows[#rows + 1] = {
+				kind = "note", indent = true, text = "Cooldown: " .. cd.name,
+				right = cd.left <= 0 and "ready" or ns.Duration(cd.left), good = cd.left <= 0,
 			}
 		end
 	end

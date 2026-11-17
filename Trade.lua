@@ -21,6 +21,26 @@ local function call(fn, ...)
 	return unpack(res, 2)
 end
 
+local function text(v)
+	if type(v) == "string" and v ~= "" and not ns.IsSecret(v) then return v end
+	return nil
+end
+
+local function level(v)
+	if type(v) == "number" and not ns.IsSecret(v) and v > 0 then return v end
+	return nil
+end
+
+local function names(...)
+	local out = {}
+	for i = 1, select("#", ...) do
+		local v = select(i, ...)
+		if type(v) == "string" and v ~= "" then out[#out + 1] = v end
+	end
+	if #out == 0 then return nil end
+	return table.concat(out, ", ")
+end
+
 local classic = {
 	trade = {
 		line = function()
@@ -37,7 +57,9 @@ local classic = {
 		numReagents = function(i) return GetTradeSkillNumReagents and GetTradeSkillNumReagents(i) or 0 end,
 		reagent = function(i, j) return GetTradeSkillReagentInfo(i, j) end,
 		reagentLink = function(i, j) return GetTradeSkillReagentItemLink and GetTradeSkillReagentItemLink(i, j) end,
-		tools = function(i) return GetTradeSkillTools and GetTradeSkillTools(i) end,
+		tools = function(i)
+			if GetTradeSkillTools then return names(GetTradeSkillTools(i)) end
+		end,
 		cooldown = function(i) return GetTradeSkillCooldown and GetTradeSkillCooldown(i) end,
 		craft = function(i, n) DoTradeSkill(i, n or 1) end,
 		close = function() if CloseTradeSkill then CloseTradeSkill() end end,
@@ -58,7 +80,9 @@ local classic = {
 		numReagents = function(i) return GetCraftNumReagents and GetCraftNumReagents(i) or 0 end,
 		reagent = function(i, j) return GetCraftReagentInfo(i, j) end,
 		reagentLink = function(i, j) return GetCraftReagentItemLink and GetCraftReagentItemLink(i, j) end,
-		tools = function(i) return GetCraftSpellFocus and GetCraftSpellFocus(i) end,
+		tools = function(i)
+			if GetCraftSpellFocus then return names(GetCraftSpellFocus(i)) end
+		end,
 		cooldown = function() return nil end,
 		craft = function(i) DoCraft(i) end,
 		close = function() if CloseCraft then CloseCraft() end end,
@@ -78,12 +102,29 @@ function Trade.Info()
 	if not Trade.mode then return nil end
 	if Trade.mode == "modern" then
 		local t = T()
-		local info = call(t.GetChildProfessionInfo) or call(t.GetBaseProfessionInfo)
-		if type(info) ~= "table" or not info.professionName then info = call(t.GetBaseProfessionInfo) end
-		if type(info) ~= "table" then return nil end
-		return info.professionName or info.parentProfessionName, info.skillLevel or 0, info.maxSkillLevel or 0, info.professionID or info.parentProfessionID
+		local base, child = call(t.GetBaseProfessionInfo), call(t.GetChildProfessionInfo)
+		if type(base) ~= "table" then base = {} end
+		if type(child) ~= "table" then child = {} end
+		local id = level(base.professionID) or level(child.parentProfessionID) or level(child.professionID)
+		local name = text(base.professionName) or text(child.parentProfessionName) or text(child.professionName)
+		local rank, max = child.skillLevel, level(child.maxSkillLevel)
+		if not max then rank, max = base.skillLevel, level(base.maxSkillLevel) end
+		if (not name or not max) and id then
+			local info = call(t.GetProfessionInfoBySkillLineID, id)
+			if type(info) == "table" then
+				name = name or text(info.professionName)
+				if not max then rank, max = info.skillLevel, level(info.maxSkillLevel) end
+			end
+		end
+		if not name and id then
+			local def = ns.Profs.Def(nil, id)
+			name = def and def.name
+		end
+		if not name then return nil end
+		return name, level(rank) or 0, max or 0, id
 	end
 	local name, rank, max = classic[Trade.mode].line()
+	if not text(name) then return nil end
 	return name, rank or 0, max or 0, nil
 end
 

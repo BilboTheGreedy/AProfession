@@ -190,6 +190,9 @@ local function storedDetail()
 	if entry and entry.window then
 		local how = ns.db.replace and "Click its tab to open it." or "Open the profession to craft or refresh it."
 		rows[#rows + 1] = { kind = "note", text = how, dim = true }
+		if entry.id and C_TradeSkillUI and C_TradeSkillUI.OpenTradeSkill then
+			rows[#rows + 1] = { kind = "open", entry = entry, text = "Open " .. entry.name .. " now", good = true }
+		end
 	end
 	local picked
 	for _, r in ipairs(Store.List(state.prof or "")) do
@@ -479,6 +482,8 @@ local function createDetailRow(list)
 		elseif d.kind == "queue" then
 			table.remove(state.queue, d.index)
 			Window.Refresh(true)
+		elseif d.kind == "open" then
+			if not ns.Tabs.Direct(d.entry) then ns.Print("cannot open " .. d.entry.name .. " right now") end
 		end
 	end)
 	row:SetScript("OnEnter", function(self)
@@ -511,7 +516,7 @@ local function updateDetailRow(row, d)
 	row.icon:Hide()
 	row.right:SetText("")
 	row.right:SetTextColor(C.text[1], C.text[2], C.text[3])
-	row.hl:SetShown(d.kind == "queue" or (d.kind == "reagent" and d.sub ~= nil))
+	row.hl:SetShown(d.kind == "queue" or d.kind == "open" or (d.kind == "reagent" and d.sub ~= nil))
 	row.text:ClearAllPoints()
 	row.text:SetPoint("RIGHT", row.right, "LEFT", -6, 0)
 	row.text:SetPoint("LEFT", 10, 0)

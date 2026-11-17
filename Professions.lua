@@ -86,6 +86,16 @@ function Profs.RankName(max)
 	return RANKS[max or 0]
 end
 
+local function tradeInfo(id)
+	local t = C_TradeSkillUI
+	if not t or not t.GetProfessionInfoBySkillLineID then return nil end
+	local ok, info = pcall(t.GetProfessionInfoBySkillLineID, id)
+	if not ok or type(info) ~= "table" then return nil end
+	local rank, max = num(info.skillLevel), num(info.maxSkillLevel)
+	if not rank or not max or rank <= 0 or max <= 0 then return nil end
+	return rank, max, str(info.professionName)
+end
+
 local function cast(def)
 	if not def.spell then return nil end
 	return spellName(def.spell) or def.cast or def.name
@@ -101,7 +111,15 @@ local function scanSkillInfo(add)
 		if ok2 and type(line) == "table" and not line.isHeader then
 			local name = str(line.name)
 			local def = Profs.Def(name, num(line.skillID))
-			if def then add(def, name, num(line.rank), num(line.maxRank) or num(line.skillMaxRank)) end
+			if def then
+				local rank = num(line.rank) or num(line.skillRank)
+				local max = num(line.maxRank) or num(line.skillMaxRank) or num(line.maxSkillRank)
+				if not rank or not max then
+					local r, m = tradeInfo(def.id)
+					rank, max = rank or r, max or m
+				end
+				add(def, name, rank, max)
+			end
 		end
 	end
 	return true
@@ -139,6 +157,35 @@ local function scanProfessions(add)
 	return true
 end
 
+local function scanTrade(add)
+	local any = false
+	for _, def in ipairs(LIST) do
+		local rank, max, name = tradeInfo(def.id)
+		if rank then
+			add(def, name, rank, max)
+			any = true
+		end
+	end
+	return any
+end
+
+local function scanSpells(add)
+	for _, def in ipairs(LIST) do
+		local name = def.spell and spellName(def.spell)
+		if name then
+			local known = false
+			if C_Spell and C_Spell.GetSpellInfo then
+				local ok, info = pcall(C_Spell.GetSpellInfo, name)
+				known = ok and info ~= nil
+			elseif GetSpellInfo then
+				local ok, n = pcall(GetSpellInfo, name)
+				known = ok and n ~= nil
+			end
+			if known then add(def, not def.cast and name or nil) end
+		end
+	end
+end
+
 function Profs.Known()
 	local found, extra = {}, {}
 	local function add(def, name, rank, max, icon)
@@ -152,9 +199,9 @@ function Profs.Known()
 		e.max = max or e.max
 		e.icon = (type(icon) == "string" or type(icon) == "number") and icon or e.icon
 	end
-	scanSkillInfo(add)
-	scanSkillLines(add)
-	scanProfessions(add)
+	local a, b, c = scanSkillInfo(add), scanSkillLines(add), scanProfessions(add)
+	local d = scanTrade(add)
+	if not (a or b or c or d) then scanSpells(add) end
 	local live, lrank, lmax, lid
 	if ns.Trade.Active() then live, lrank, lmax, lid = ns.Trade.Info() end
 	if live then
@@ -171,14 +218,15 @@ function Profs.Known()
 			local def = Profs.Def(name)
 			if def then
 				if not found[def] then add(def, name, p.rank, p.max) end
-			elseif not extra[name] then
+				found[def].stored = found[def].stored or name
+			elseif name ~= "" and not extra[name] then
 				extra[name] = { name = name, rank = p.rank, max = p.max }
 			end
 		end
 	end
 	local out = {}
 	for def, e in pairs(found) do
-		e.key = e.name
+		e.key = (stored and type(stored[e.name]) == "table" and e.name) or e.stored or e.name
 		e.icon = e.icon or def.icon
 		e.window = def.spell ~= nil
 		e.spell = cast(def)

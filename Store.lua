@@ -15,7 +15,7 @@ local function char()
 end
 
 function Store.Save(name, rank, max, recipes)
-	if not name or not ns.db then return end
+	if type(name) ~= "string" or name == "" or not ns.db then return end
 	local c = char()
 	local p = c[name] or {}
 	c[name] = p
@@ -99,12 +99,14 @@ function Store.Find(text)
 	table.sort(keys)
 	for _, key in ipairs(keys) do
 		local profs = {}
-		for prof in pairs(ns.db.chars[key]) do profs[#profs + 1] = prof end
+		for prof, p in pairs(ns.db.chars[key]) do
+			if type(p) == "table" then profs[#profs + 1] = prof end
+		end
 		table.sort(profs)
 		for _, prof in ipairs(profs) do
 			local p = ns.db.chars[key][prof]
 			for _, r in ipairs(p.recipes or {}) do
-				local hit = (id and r[2] == id) or r[1]:lower():find(q, 1, true)
+				local hit = (id and r[2] == id) or tostring(r[1]):lower():find(q, 1, true)
 				if not hit and r[2] and r[2] > 0 then
 					local iname = ns.ItemName(r[2])
 					hit = iname and iname:lower():find(q, 1, true)
@@ -134,13 +136,15 @@ function Store.Who(text)
 	if #found > 15 then ns.Print((#found - 15) .. " more, be more specific") end
 end
 
-function Store.Cooldowns()
+function Store.Cooldowns(charKey)
 	local out = {}
-	local c = ns.db.chars[ns.charKey or ""]
-	if not c then return out end
+	local c = ns.db.chars[charKey or ns.charKey or ""]
+	if type(c) ~= "table" then return out end
 	for prof, p in pairs(c) do
-		for name, expires in pairs(p.cooldowns or {}) do
-			out[#out + 1] = { profession = prof, name = name, left = expires - now() }
+		if type(p) == "table" then
+			for name, expires in pairs(p.cooldowns or {}) do
+				out[#out + 1] = { profession = prof, name = name, left = expires - now() }
+			end
 		end
 	end
 	table.sort(out, function(a, b)
@@ -237,6 +241,9 @@ function Store.Missing(profession, professionID, known, unknown)
 end
 
 ns:Listen("LOGIN", function()
+	for _, c in pairs(ns.db.chars) do
+		if type(c) == "table" then c[""] = nil end
+	end
 	if ns.db.reminder then
 		ns.After(5, function() Store.Remind(false) end)
 	end
